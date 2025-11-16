@@ -3,9 +3,11 @@ name: Keep Actions Alive
 
 on:
   schedule:
+    # 每月一次，避开整点高峰，减少队列丢弃概率
     - cron: '17 3 1 * *'
   workflow_dispatch:
 
+# 最小权限即可启用工作流
 permissions:
   actions: write
 
@@ -18,25 +20,26 @@ jobs:
           echo "WORKFLOW_NAME=${{ github.workflow }}"
           echo "REPO=${{ github.repository }}"
 
-      - name: Enable current workflow (verbose)
+      - name: Enable current workflow (verbose + checks)
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # 关键：CLI 要 GH_TOKEN
+          # 关键：GitHub CLI 要求使用 GH_TOKEN 环境变量
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
+
           echo "Listing workflows..."
-          gh api repos/${{ github.repository }}/actions/workflows | jq '.workflows[] | {name, id, path, state}'
-          
-          # 方案A：按名字严格匹配当前 workflow 名称
-          wid="$(gh api repos/${{ github.repository }}/actions/workflows --jq \
+          gh api "repos/${{ github.repository }}/actions/workflows" | jq '.workflows[] | {name, id, path, state}'
+
+          # 优先按当前 workflow 显示名称匹配
+          wid="$(gh api "repos/${{ github.repository }}/actions/workflows" --jq \
             '.workflows[] | select(.name == "'"${{ github.workflow }}"'") | .id')"
-          
-          # 如果名字匹配失败，退回按文件路径匹配当前文件名
+
+          # 名称不匹配时，按文件路径兜底匹配
           if [ -z "$wid" ]; then
             echo "Name match failed, trying by path..."
-            this_file="$(basename "${GITHUB_WORKFLOW_REF:-}")"
-            # GITHUB_WORKFLOW_REF 在复用/调用时才有值；改用静态文件名
+            # 如果你改了文件名，请同步这里的文件名
             this_file="keepalive.yml"
-            wid="$(gh api repos/${{ github.repository }}/actions/workflows --jq \
+            wid="$(gh api "repos/${{ github.repository }}/actions/workflows" --jq \
               '.workflows[] | select(.path | endswith("'"$this_file"'")) | .id')"
           fi
 
@@ -46,5 +49,16 @@ jobs:
           fi
 
           echo "Enabling workflow id=$wid ..."
-          gh api -X PUT "repos/${{ github.repository }}/actions/workflows/${wid}/enable" -v
+          # 任选其一：--include 或 --verbose
+          gh api -X PUT "repos/${{ github.repository }}/actions/workflows/${wid}/enable" --include
+
+          echo "Query state after enable..."
+          state="$(gh api "repos/${{ github.repository }}/actions/workflows/${wid}" --jq '.state')"
+          echo "Workflow state: $state"
+
+          if [ "$state" != "active" ]; then
+            echo "ERROR: workflow state is '$state', expected 'active'."
+            exit 1
+          fi
+
           echo "Done"
