@@ -3,11 +3,9 @@ name: Keep Actions Alive
 
 on:
   schedule:
-    # 每月一次，避开整点高峰，减少队列丢弃概率
-    - cron: '17 3 1 * *'
+    - cron: '17 3 1 * *'   # 每月一次，避开整点
   workflow_dispatch:
 
-# 最小权限即可启用工作流
 permissions:
   actions: write
 
@@ -15,50 +13,11 @@ jobs:
   alive:
     runs-on: ubuntu-latest
     steps:
-      - name: Show context
-        run: |
-          echo "WORKFLOW_NAME=${{ github.workflow }}"
-          echo "REPO=${{ github.repository }}"
-
-      - name: Enable current workflow (verbose + checks)
+      - name: Enable this workflow
         env:
-          # 关键：GitHub CLI 要求使用 GH_TOKEN 环境变量
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-
-          echo "Listing workflows..."
-          gh api "repos/${{ github.repository }}/actions/workflows" | jq '.workflows[] | {name, id, path, state}'
-
-          # 优先按当前 workflow 显示名称匹配
           wid="$(gh api "repos/${{ github.repository }}/actions/workflows" --jq \
             '.workflows[] | select(.name == "'"${{ github.workflow }}"'") | .id')"
-
-          # 名称不匹配时，按文件路径兜底匹配
-          if [ -z "$wid" ]; then
-            echo "Name match failed, trying by path..."
-            # 如果你改了文件名，请同步这里的文件名
-            this_file="keepalive.yml"
-            wid="$(gh api "repos/${{ github.repository }}/actions/workflows" --jq \
-              '.workflows[] | select(.path | endswith("'"$this_file"'")) | .id')"
-          fi
-
-          if [ -z "$wid" ]; then
-            echo "ERROR: workflow_id not found. Check workflow name/path."
-            exit 1
-          fi
-
-          echo "Enabling workflow id=$wid ..."
-          # 任选其一：--include 或 --verbose
           gh api -X PUT "repos/${{ github.repository }}/actions/workflows/${wid}/enable" --include
-
-          echo "Query state after enable..."
-          state="$(gh api "repos/${{ github.repository }}/actions/workflows/${wid}" --jq '.state')"
-          echo "Workflow state: $state"
-
-          if [ "$state" != "active" ]; then
-            echo "ERROR: workflow state is '$state', expected 'active'."
-            exit 1
-          fi
-
-          echo "Done"
