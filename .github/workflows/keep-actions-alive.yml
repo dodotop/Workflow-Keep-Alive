@@ -13,8 +13,7 @@ jobs:
     steps:
       - name: Enable current workflow
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # 关键：GH_TOKEN=GITHUB_TOKEN
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          wid="$(gh api repos/${{ github.repository }}/actions/workflows \
-            --jq '.workflows[] | select(.name == "${{ github.workflow }}") | .id')"
+          wid="$(gh api repos/${{ github.repository }}/actions/workflows --jq '.workflows[] | select(.name == "${{ github.workflow }}") | .id')"
           gh api -X PUT "repos/${{ github.repository }}/actions/workflows/${wid}/enable"
