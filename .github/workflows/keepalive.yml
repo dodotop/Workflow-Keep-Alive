@@ -1,0 +1,50 @@
+# .github/workflows/keepalive.yml
+name: Keep Actions Alive
+
+on:
+  schedule:
+    - cron: '17 3 1 * *'
+  workflow_dispatch:
+
+permissions:
+  actions: write
+
+jobs:
+  alive:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Show context
+        run: |
+          echo "WORKFLOW_NAME=${{ github.workflow }}"
+          echo "REPO=${{ github.repository }}"
+
+      - name: Enable current workflow (verbose)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # 关键：CLI 要 GH_TOKEN
+        run: |
+          set -euo pipefail
+          echo "Listing workflows..."
+          gh api repos/${{ github.repository }}/actions/workflows | jq '.workflows[] | {name, id, path, state}'
+          
+          # 方案A：按名字严格匹配当前 workflow 名称
+          wid="$(gh api repos/${{ github.repository }}/actions/workflows --jq \
+            '.workflows[] | select(.name == "'"${{ github.workflow }}"'") | .id')"
+          
+          # 如果名字匹配失败，退回按文件路径匹配当前文件名
+          if [ -z "$wid" ]; then
+            echo "Name match failed, trying by path..."
+            this_file="$(basename "${GITHUB_WORKFLOW_REF:-}")"
+            # GITHUB_WORKFLOW_REF 在复用/调用时才有值；改用静态文件名
+            this_file="keepalive.yml"
+            wid="$(gh api repos/${{ github.repository }}/actions/workflows --jq \
+              '.workflows[] | select(.path | endswith("'"$this_file"'")) | .id')"
+          fi
+
+          if [ -z "$wid" ]; then
+            echo "ERROR: workflow_id not found. Check workflow name/path."
+            exit 1
+          fi
+
+          echo "Enabling workflow id=$wid ..."
+          gh api -X PUT "repos/${{ github.repository }}/actions/workflows/${wid}/enable" -v
+          echo "Done"
